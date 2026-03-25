@@ -1,6 +1,6 @@
 # MVP-0 (No PDE): One-Shot Conditional Tumor Forecasting
 
-This folder is the minimal PyTorch scaffold for Phase 1.
+This folder is the minimal PyTorch scaffold for Phase 1/2.
 
 ## Goal
 - Train a one-shot conditional model on synthetic tumor data.
@@ -8,12 +8,12 @@ This folder is the minimal PyTorch scaffold for Phase 1.
 - Report Dice + inference time.
 
 ## File Map
-- `src/data/synthetic_dataset.py`: synthetic data generation + dataset class
-- `src/models/oneshot_predictor.py`: minimal one-shot model
-- `src/train.py`: training loop
-- `src/evaluate.py`: evaluation loop (Dice/runtime)
-- `src/infer.py`: quick inference + save predictions
-- `src/utils/metrics.py`: Dice and helpers
-- `src/utils/visualize.py`: qualitative plots
-- `configs/mvp0_synth.yaml`: experiment config
-- `scripts/run_*.sh`: convenience launch scripts
+- `dataset.py`: synthetic data generation + dataloaders
+- `model.py`: one-shot 3D predictor model
+- `drift_loss.py`: simplified drifting loss (MVP-1, PyTorch)
+- `train.py`: training loop
+- `eval.py`: evaluation loop (Dice/runtime)
+- `infer.py`: inference entrypoint (reserved for next step)
+- `config.yaml`: experiment config
+- `RESULTS_LOG.md`: experiment history and aggregate metrics
+- `ARCHITECTURE_DIAGRAMS.md`: shareable Mermaid diagrams of the pipeline

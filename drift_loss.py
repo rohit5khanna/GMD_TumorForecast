@@ -72,20 +72,28 @@ def drifting_loss_from_logits(
     """
     probs = torch.sigmoid(logits)
 
-    # Feature space for drifting objective.
+    # Current trainable features.
     feat_gen = pooled_feature_map(probs, pool_size=pool_size)
+    # Frozen copy used to construct fixed drifting target.
+    x_old = feat_gen.detach()
     feat_pos = pooled_feature_map(target_mask.float(), pool_size=pool_size).detach()
-    feat_neg = feat_gen.detach()
+
+    # Simple in-batch negatives. With batch size 1, fall back to self.
+    if x_old.shape[0] > 1:
+        feat_neg = torch.roll(x_old, shifts=1, dims=0)
+    else:
+        feat_neg = x_old
 
     v = compute_drifting_field(
-        x_gen=feat_gen,
+        x_gen=x_old,
         y_pos=feat_pos,
         y_neg=feat_neg,
         temperature=temperature,
     )
 
-    # Fixed-point style objective: ||x - stopgrad(x + V)||^2 = ||V||^2
-    goal = feat_gen + v.detach()
+    # Fixed-point style target from frozen state: x_old + stopgrad(V)
+    goal = x_old + v.detach()
+    # Train current features to move toward drifting target.
     loss = F.mse_loss(feat_gen, goal)
 
     stats = {

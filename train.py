@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import random
 from typing import Dict
@@ -80,7 +81,11 @@ def run_val(model: torch.nn.Module, val_loader, device: torch.device) -> Dict[st
 
 
 def main() -> None:
-    with open("config.yaml", "r", encoding="utf-8") as f:
+    parser = argparse.ArgumentParser(description="Train MVP model.")
+    parser.add_argument("--config", type=str, default="config.yaml")
+    args = parser.parse_args()
+
+    with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     os.makedirs(cfg.get("output_dir", "outputs"), exist_ok=True)

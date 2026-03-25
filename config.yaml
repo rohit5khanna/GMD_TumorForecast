@@ -11,3 +11,7 @@ volume_shape:
 - 32
 - 32
 - 32
+use_drift_loss: false
+lambda_drift: 0.1
+drift_temperature: 0.1
+drift_feature_pool: 4

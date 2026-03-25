@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import yaml
 
 from dataset import make_dataloaders
+from drift_loss import drifting_loss_from_logits
 from model import OneShotPredictor
 
 
@@ -92,6 +93,18 @@ def main() -> None:
 
     model = OneShotPredictor(in_channels=2, base_channels=16).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg["learning_rate"]))
+    use_drift_loss = bool(cfg.get("use_drift_loss", False))
+    lambda_drift = float(cfg.get("lambda_drift", 0.1))
+    drift_temperature = float(cfg.get("drift_temperature", 0.1))
+    drift_feature_pool = int(cfg.get("drift_feature_pool", 4))
+
+    print(
+        "[INFO] Drifting loss: "
+        f"{'ON' if use_drift_loss else 'OFF'} | "
+        f"lambda={lambda_drift:.4f} | "
+        f"temperature={drift_temperature:.4f} | "
+        f"pool={drift_feature_pool}"
+    )
 
     best_val_dice = -1.0
     epochs = int(cfg["epochs"])
@@ -99,6 +112,7 @@ def main() -> None:
     for epoch in range(1, epochs + 1):
         model.train()
         running_loss, running_dice, n_batches = 0.0, 0.0, 0
+        running_seg_loss, running_drift_loss = 0.0, 0.0
 
         for xb, yb in train_loader:
             xb = xb.to(device)
@@ -109,7 +123,19 @@ def main() -> None:
 
             loss_bce = F.binary_cross_entropy_with_logits(logits, yb)
             loss_dice = soft_dice_loss(logits, yb)
-            loss = 0.5 * loss_bce + 0.5 * loss_dice
+            seg_loss = 0.5 * loss_bce + 0.5 * loss_dice
+
+            if use_drift_loss:
+                drift_loss, _ = drifting_loss_from_logits(
+                    logits=logits,
+                    target_mask=yb,
+                    temperature=drift_temperature,
+                    pool_size=drift_feature_pool,
+                )
+            else:
+                drift_loss = torch.zeros((), device=device)
+
+            loss = seg_loss + lambda_drift * drift_loss
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -118,10 +144,14 @@ def main() -> None:
             dice = dice_from_logits(logits, yb)
 
             running_loss += float(loss.item())
+            running_seg_loss += float(seg_loss.item())
+            running_drift_loss += float(drift_loss.item())
             running_dice += float(dice.item())
             n_batches += 1
 
         train_loss = running_loss / max(n_batches, 1)
+        train_seg_loss = running_seg_loss / max(n_batches, 1)
+        train_drift_loss = running_drift_loss / max(n_batches, 1)
         train_dice = running_dice / max(n_batches, 1)
 
         val_metrics = run_val(model, val_loader, device)
@@ -130,7 +160,10 @@ def main() -> None:
 
         print(
             f"[Epoch {epoch:03d}] "
-            f"train_loss={train_loss:.4f} train_dice={train_dice:.4f} "
+            f"train_loss={train_loss:.4f} "
+            f"train_seg={train_seg_loss:.4f} "
+            f"train_drift={train_drift_loss:.4f} "
+            f"train_dice={train_dice:.4f} "
             f"val_loss={val_loss:.4f} val_dice={val_dice:.4f}"
         )
 

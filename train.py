@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import yaml
 
 from dataset import make_dataloaders
-from model import OneShotPredictor3D
+from model import OneShotPredictor
 
 
 def set_seed(seed: int) -> None:
@@ -90,7 +90,7 @@ def main() -> None:
 
     train_loader, val_loader = make_dataloaders(cfg)
 
-    model = OneShotPredictor3D(in_channels=2, base_channels=16).to(device)
+    model = OneShotPredictor(in_channels=2, base_channels=16).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg["learning_rate"]))
 
     best_val_dice = -1.0

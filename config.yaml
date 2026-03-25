@@ -1,10 +1,13 @@
-seed: 42
-train_samples: 40
-val_samples: 10
-batch_size: 4
-epochs: 10
-learning_rate: 1.0e-4
-volume_shape: [64, 64, 64]
-threshold: 0.5
+batch_size: 1
 device: auto
+epochs: 5
+learning_rate: 0.0001
 output_dir: outputs
+seed: 42
+threshold: 0.5
+train_samples: 20
+val_samples: 6
+volume_shape:
+- 32
+- 32
+- 32

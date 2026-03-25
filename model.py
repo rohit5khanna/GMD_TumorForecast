@@ -5,20 +5,22 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+
 class ConvBlock3D(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
         self.block = nn.Sequential(
-            nn.Conv3d(in_ch, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm3d(out_ch),
+            nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm3d(out_channels),
             nn.ReLU(inplace=True),
-            nn.Conv3d(out_ch, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm3d(out_ch),
+            nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm3d(out_channels),
             nn.ReLU(inplace=True),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.block(x)
+
 
 class OneShotPredictor(nn.Module):
     """
@@ -26,29 +28,29 @@ class OneShotPredictor(nn.Module):
     Output: [B, 1, H, W, D]  -> logits for future tumor mask
     """
 
-    def __init__(self, in_ch: int=2, base_ch: int=16):
+    def __init__(self, in_channels: int = 2, base_channels: int = 16):
         super().__init__()
 
-        self.enc1 = ConvBlock3D(in_ch, base_ch)
-        self.pool1 = nn.MaxPool3D(2)
+        self.enc1 = ConvBlock3D(in_channels, base_channels)
+        self.pool1 = nn.MaxPool3d(2)
 
-        self.enc2 = ConvBlock3D(in_ch, base_ch*2)
-        self.pool2 = nn.MaxPool3D(2)
+        self.enc2 = ConvBlock3D(base_channels, base_channels * 2)
+        self.pool2 = nn.MaxPool3d(2)
 
-        self.bootleneck = ConvBlock3D(base_ch*2, base_ch*4)
+        self.bottleneck = ConvBlock3D(base_channels * 2, base_channels * 4)
 
-        self.up2 = nn.ConvTranspose3d(base_ch*4, base_ch*2, kernel_size=2, stride=2)
-        self.dec2 = ConvBlock3D(base_ch*4, base_ch*2)
+        self.up2 = nn.ConvTranspose3d(base_channels * 4, base_channels * 2, kernel_size=2, stride=2)
+        self.dec2 = ConvBlock3D(base_channels * 4, base_channels * 2)
 
-        self.up1 = nn.ConvTranspose3d(base_ch*2, base_ch, kernel_size=2, stride=2)
-        self.dec1 = ConvBlock3D(base_ch*2, base_ch)
+        self.up1 = nn.ConvTranspose3d(base_channels * 2, base_channels, kernel_size=2, stride=2)
+        self.dec1 = ConvBlock3D(base_channels * 2, base_channels)
 
-        self.head = nn.Conv3d(base_ch, 1, kernel_size=1)
+        self.head = nn.Conv3d(base_channels, 1, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         e1 = self.enc1(x)
         e2 = self.enc2(self.pool1(e1))
-        b = self.bootleneck(self.pool2(e2))
+        b = self.bottleneck(self.pool2(e2))
 
         d2 = self.up2(b)
         d2 = torch.cat([d2, e2], dim=1)
@@ -68,12 +70,4 @@ if __name__ == "__main__":
     y = model(x)
     print("input:", x.shape)
     print("logits:", y.shape)
-
-
-
-
-
-
-
-
         

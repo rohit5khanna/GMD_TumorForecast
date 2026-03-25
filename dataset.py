@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-class SyntheticTumor(Dataset):
+class SyntheticTumorDataset(Dataset):
     """
     Returns:
       x: [2, H, W, D] float32
@@ -138,12 +138,12 @@ class SyntheticTumor(Dataset):
 
 
 def make_dataloaders(cfg: Dict):
-    train_ds = SyntheticTumor(
+    train_ds = SyntheticTumorDataset(
         num_samples=cfg["train_samples"],
         volume_shape=tuple(cfg["volume_shape"]),
         seed=int(cfg.get("seed", 42)),
     )
-    val_ds = SyntheticTumor(
+    val_ds = SyntheticTumorDataset(
         num_samples=cfg["val_samples"],
         volume_shape=tuple(cfg["volume_shape"]),
         seed=int(cfg.get("seed", 42)) + 1,
@@ -176,3 +176,7 @@ if __name__ == "__main__":
     xb, yb = next(iter(train_loader))
     print("x shape:", xb.shape)  # [B, 2, H, W, D]
     print("y shape:", yb.shape)  # [B, 1, H, W, D]
+
+
+# Backward-compatible alias.
+SyntheticTumor = SyntheticTumorDataset

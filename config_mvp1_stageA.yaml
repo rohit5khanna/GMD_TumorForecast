@@ -1,8 +1,8 @@
-batch_size: 1
+batch_size: 2
 device: auto
-epochs: 10
+epochs: 12
 learning_rate: 0.0001
-output_dir: outputs/mvp1_hard_drift
+output_dir: outputs/mvp1_stageA
 seed: 42
 threshold: 0.5
 train_samples: 80
@@ -13,8 +13,9 @@ volume_shape:
   - 32
 
 use_drift_loss: true
-lambda_drift: 0.01
-drift_temperature: 0.2
+lambda_drift: 0.2
+drift_lambda_warmup_epochs: 4
+drift_temperature: 0.1
 drift_feature_pool: 2
 drift_pool_scales: [2]
 drift_pos_weight: 1.0
@@ -22,10 +23,9 @@ drift_neg_weight: 1.0
 drift_boundary_gamma: 0.0
 drift_delta_t_beta: 0.0
 drift_delta_t_center: 0.6
-drift_use_memory_bank: false
-drift_neg_bank_size: 0
+drift_use_memory_bank: true
+drift_neg_bank_size: 64
 drift_feature_source: probs
-drift_lambda_warmup_epochs: 0
 
 dataset_params:
   baseline_components_min: 1

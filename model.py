@@ -47,7 +47,11 @@ class OneShotPredictor(nn.Module):
 
         self.head = nn.Conv3d(base_channels, 1, kernel_size=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        return_features: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
         e1 = self.enc1(x)
         e2 = self.enc2(self.pool1(e1))
         b = self.bottleneck(self.pool2(e2))
@@ -61,6 +65,8 @@ class OneShotPredictor(nn.Module):
         d1 = self.dec1(d1)
 
         logits = self.head(d1)
+        if return_features:
+            return logits, {"dec1": d1, "bottleneck": b}
         return logits
 
 

@@ -110,3 +110,101 @@
 ### Current Conclusion (Synthetic MVP)
 - The drift-regularized objective provides a strong and repeatable gain under matched settings.
 - Inference remains one-shot and fast; the gain is due to training objective, not iterative test-time optimization.
+
+---
+
+## Iteration 5: MVP-1 Hard-Synthetic Baseline (Initial Settings)
+- Date: March 26, 2026
+- Setup: Harder synthetic generation regime, CPU/GPU Colab run, `epochs=10`.
+- Drift config: `lambda_drift=0.01`, `temperature=0.2`, `pool=2`.
+
+### Single-Seed Smoke (seed 42)
+| variant | dice | bce_loss | sec_per_sample |
+|---|---:|---:|---:|
+| drift | 0.5645870220 | 0.4637282357 | 0.3281 |
+| no-drift | 0.5658592191 | 0.4669078544 | 0.2673 |
+
+### 3-Seed Matched Comparison (Initial Hard Config)
+| variant | mean_dice | std_dice | n |
+|---|---:|---:|---:|
+| drift | 0.5380797624 | 0.0215629546 | 3 |
+| no-drift | 0.5386029230 | 0.0220036685 | 3 |
+
+- Delta (`drift - no_drift`): `-0.0005231606` (effectively neutral)
+
+### Notes
+- On hard synthetic, the original drift setting did not improve Dice.
+- This motivated a small retune under matched conditions.
+
+---
+
+## Iteration 6: MVP-1 Hard-Synthetic Retune (Seed 42)
+- Date: March 26, 2026
+- Setup: GPU runtime, matched data regime, `batch_size=2`, `epochs=12`, grid over drift hyperparameters.
+
+### Retune Trials
+| trial | lambda_drift | temperature | dice | bce_loss | sec_per_sample |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 0.05 | 0.1 | 0.6258903444 | 0.4142772138 | 0.0136006657 |
+| 1 | 0.05 | 0.2 | 0.6294468164 | 0.4084808558 | 0.0140792258 |
+| 2 | 0.10 | 0.1 | 0.6289154887 | 0.4086705625 | 0.0146412360 |
+| 3 | 0.10 | 0.2 | 0.6326019883 | 0.4034049958 | 0.0134116809 |
+| 4 | 0.20 | 0.1 | 0.6378787696 | 0.3897754490 | 0.0194680911 |
+| 5 | 0.20 | 0.2 | 0.6372174203 | 0.3921767890 | 0.0140503070 |
+
+### Selected Config for Confirm
+- `lambda_drift=0.2`
+- `drift_temperature=0.1`
+- `drift_feature_pool=2`
+- `batch_size=2`
+- `epochs=12`
+
+---
+
+## Iteration 7: MVP-1 Tuned Hard-Synthetic Confirm (3 Seeds, Matched Control)
+- Date: March 26, 2026
+- Setup: Tuned config from Iteration 6, matched no-drift control, seeds `42, 43, 44`.
+
+### Per-Seed Results
+| seed | drift_dice | nodrift_dice |
+|---:|---:|---:|
+| 42 | 0.6379722297 | 0.6248903215 |
+| 43 | 0.6047135562 | 0.6061816037 |
+| 44 | 0.6715537488 | 0.6690127134 |
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | mean_bce | mean_sec_per_sample | n |
+|---|---:|---:|---:|---:|---:|
+| drift | 0.6380798449 | 0.0272875005 | 0.4243817170 | 0.0135437654 | 3 |
+| no-drift | 0.6333615462 | 0.0263408216 | 0.4331462363 | 0.0147896976 | 3 |
+
+- Dice delta (`drift - no_drift`): `+0.0047182987`
+- Relative Dice gain: `+0.74%`
+
+### Current MVP-1 Interpretation
+- Tuned drift provides a small positive gain on the harder synthetic regime.
+- Effect size is much smaller than MVP-0 easy-synthetic gains, indicating regime sensitivity.
+
+---
+
+## Iteration 8: Planned Incremental Ablation Roadmap (Mods 1-7)
+- Date: March 26, 2026
+- Objective: test the first 7 drift modifications incrementally (not all at once) for clean attribution.
+
+### Stage Order (Locked)
+| stage | modifications enabled |
+|---|---|
+| A | #1 stronger negatives (memory bank) + #4 lambda warmup |
+| B | Stage A + #3 separate attraction/repulsion weights |
+| C | Stage B + #2 multiscale drift features |
+| D | Stage C + #5 boundary-aware drift emphasis |
+| E | Stage D + #7 time-aware drift scaling |
+| F | Stage E + #6 latent-feature drift source |
+
+### Evaluation Policy
+1. One-seed screen for each stage.
+2. Run 3-seed confirm only if stage improves over current best.
+3. Keep matched no-drift control unchanged for fair deltas.
+
+### Status
+- Stage A code path added; pending run.

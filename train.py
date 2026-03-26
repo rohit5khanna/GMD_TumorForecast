@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import yaml
 
 from dataset import make_dataloaders
-from drift_loss import drifting_loss_from_logits
+from drift_loss import DriftFeatureBank, drifting_loss_from_logits
 from model import OneShotPredictor
 
 
@@ -100,15 +100,31 @@ def main() -> None:
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg["learning_rate"]))
     use_drift_loss = bool(cfg.get("use_drift_loss", False))
     lambda_drift = float(cfg.get("lambda_drift", 0.1))
+    drift_lambda_warmup_epochs = int(cfg.get("drift_lambda_warmup_epochs", 0))
     drift_temperature = float(cfg.get("drift_temperature", 0.1))
     drift_feature_pool = int(cfg.get("drift_feature_pool", 4))
+    drift_pool_scales = cfg.get("drift_pool_scales", [drift_feature_pool])
+    drift_pos_weight = float(cfg.get("drift_pos_weight", 1.0))
+    drift_neg_weight = float(cfg.get("drift_neg_weight", 1.0))
+    drift_boundary_gamma = float(cfg.get("drift_boundary_gamma", 0.0))
+    drift_delta_t_beta = float(cfg.get("drift_delta_t_beta", 0.0))
+    drift_delta_t_center = float(cfg.get("drift_delta_t_center", 0.6))
+    drift_use_memory_bank = bool(cfg.get("drift_use_memory_bank", False))
+    drift_neg_bank_size = int(cfg.get("drift_neg_bank_size", 0))
+    drift_feature_source = str(cfg.get("drift_feature_source", "probs")).lower()
+    if drift_feature_source not in {"probs", "latent"}:
+        raise ValueError("drift_feature_source must be one of {'probs', 'latent'}")
+
+    feature_bank = DriftFeatureBank(max_items=drift_neg_bank_size) if drift_use_memory_bank else None
 
     print(
         "[INFO] Drifting loss: "
         f"{'ON' if use_drift_loss else 'OFF'} | "
         f"lambda={lambda_drift:.4f} | "
         f"temperature={drift_temperature:.4f} | "
-        f"pool={drift_feature_pool}"
+        f"pool={drift_feature_pool} | "
+        f"scales={drift_pool_scales} | "
+        f"src={drift_feature_source}"
     )
 
     best_val_dice = -1.0
@@ -118,29 +134,51 @@ def main() -> None:
         model.train()
         running_loss, running_dice, n_batches = 0.0, 0.0, 0
         running_seg_loss, running_drift_loss = 0.0, 0.0
+        running_drift_field_l2, running_dt_scale = 0.0, 0.0
+
+        if drift_lambda_warmup_epochs > 0:
+            warm = min(1.0, float(epoch) / float(drift_lambda_warmup_epochs))
+            lambda_drift_epoch = lambda_drift * warm
+        else:
+            lambda_drift_epoch = lambda_drift
 
         for xb, yb in train_loader:
             xb = xb.to(device)
             yb = yb.to(device)
 
             optimizer.zero_grad()
-            logits = model(xb)
+            if use_drift_loss and drift_feature_source == "latent":
+                logits, feat_dict = model(xb, return_features=True)
+                drift_pred_feature = feat_dict["dec1"]
+            else:
+                logits = model(xb)
+                drift_pred_feature = None
 
             loss_bce = F.binary_cross_entropy_with_logits(logits, yb)
             loss_dice = soft_dice_loss(logits, yb)
             seg_loss = 0.5 * loss_bce + 0.5 * loss_dice
 
             if use_drift_loss:
-                drift_loss, _ = drifting_loss_from_logits(
+                drift_loss, drift_stats = drifting_loss_from_logits(
                     logits=logits,
                     target_mask=yb,
                     temperature=drift_temperature,
                     pool_size=drift_feature_pool,
+                    pool_scales=drift_pool_scales,
+                    pos_weight=drift_pos_weight,
+                    neg_weight=drift_neg_weight,
+                    boundary_gamma=drift_boundary_gamma,
+                    delta_t_map=xb[:, 1:2],
+                    delta_t_beta=drift_delta_t_beta,
+                    delta_t_center=drift_delta_t_center,
+                    feature_bank=feature_bank,
+                    pred_feature_map=drift_pred_feature,
                 )
             else:
                 drift_loss = torch.zeros((), device=device)
+                drift_stats = {"drift_field_l2": 0.0, "dt_scale_mean": 1.0}
 
-            loss = seg_loss + lambda_drift * drift_loss
+            loss = seg_loss + lambda_drift_epoch * drift_loss
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -151,12 +189,16 @@ def main() -> None:
             running_loss += float(loss.item())
             running_seg_loss += float(seg_loss.item())
             running_drift_loss += float(drift_loss.item())
+            running_drift_field_l2 += float(drift_stats.get("drift_field_l2", 0.0))
+            running_dt_scale += float(drift_stats.get("dt_scale_mean", 1.0))
             running_dice += float(dice.item())
             n_batches += 1
 
         train_loss = running_loss / max(n_batches, 1)
         train_seg_loss = running_seg_loss / max(n_batches, 1)
         train_drift_loss = running_drift_loss / max(n_batches, 1)
+        train_drift_field_l2 = running_drift_field_l2 / max(n_batches, 1)
+        train_dt_scale = running_dt_scale / max(n_batches, 1)
         train_dice = running_dice / max(n_batches, 1)
 
         val_metrics = run_val(model, val_loader, device)
@@ -168,6 +210,9 @@ def main() -> None:
             f"train_loss={train_loss:.4f} "
             f"train_seg={train_seg_loss:.4f} "
             f"train_drift={train_drift_loss:.4f} "
+            f"drift_l2={train_drift_field_l2:.4f} "
+            f"dt_scale={train_dt_scale:.3f} "
+            f"lambda_t={lambda_drift_epoch:.4f} "
             f"train_dice={train_dice:.4f} "
             f"val_loss={val_loss:.4f} val_dice={val_dice:.4f}"
         )

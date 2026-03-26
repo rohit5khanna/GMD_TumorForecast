@@ -21,16 +21,52 @@ class SyntheticTumorDataset(Dataset):
         num_samples: int,
         volume_shape: Tuple[int, int, int] = (64, 64, 64),
         seed: int = 42,
+        params: Dict | None = None,
     ) -> None:
         self.num_samples = int(num_samples)
         self.shape = tuple(volume_shape)
         self.seed = int(seed)
+        self.params = {
+            "baseline_components_min": 1,
+            "baseline_components_max": 2,
+            "baseline_radius_min": 3,
+            "baseline_radius_max": 7,
+            "center_margin": 12,
+            "growth_seed_min": 1,
+            "growth_seed_max": 3,
+            "growth_radius_min": 2,
+            "growth_radius_max": 5,
+            "shift_prob": 0.35,
+            "shift_voxel_max": 2,
+            "satellite_prob": 0.20,
+            "satellite_offset_max": 10,
+            "satellite_radius_min": 1,
+            "satellite_radius_max": 2,
+            "delta_t_min": 0.2,
+            "delta_t_max": 1.0,
+            "growth_steps_min": 2,
+            "growth_steps_max": 6,
+        }
+        if params:
+            self.params.update(params)
 
         # Precompute coordinate grid for fast ellipsoid drawing
         self.xx, self.yy, self.zz = np.indices(self.shape)
 
     def __len__(self) -> int:
         return self.num_samples
+
+    def _sample_int_inclusive(
+        self,
+        rng: np.random.Generator,
+        min_key: str,
+        max_key: str,
+    ) -> int:
+        low = int(self.params[min_key])
+        high = int(self.params[max_key])
+        if high < low:
+            high = low
+        return int(rng.integers(low, high + 1))
 
     def _draw_ellipsoid(
         self,
@@ -50,18 +86,23 @@ class SyntheticTumorDataset(Dataset):
 
     def _make_baseline(self, rng: np.random.Generator) -> np.ndarray:
         mask = np.zeros(self.shape, dtype=np.float32)
-        n_components = int(rng.integers(1, 3))  # 1-2 blobs
+        n_components = self._sample_int_inclusive(
+            rng, "baseline_components_min", "baseline_components_max"
+        )
+        center_margin = int(self.params["center_margin"])
+        max_margin = max(2, min(s // 3 for s in self.shape))
+        center_margin = min(center_margin, max_margin)
 
         for _ in range(n_components):
             center = (
-                int(rng.integers(12, self.shape[0] - 12)),
-                int(rng.integers(12, self.shape[1] - 12)),
-                int(rng.integers(12, self.shape[2] - 12)),
+                int(rng.integers(center_margin, self.shape[0] - center_margin)),
+                int(rng.integers(center_margin, self.shape[1] - center_margin)),
+                int(rng.integers(center_margin, self.shape[2] - center_margin)),
             )
             radii = (
-                int(rng.integers(3, 8)),
-                int(rng.integers(3, 8)),
-                int(rng.integers(3, 8)),
+                self._sample_int_inclusive(rng, "baseline_radius_min", "baseline_radius_max"),
+                self._sample_int_inclusive(rng, "baseline_radius_min", "baseline_radius_max"),
+                self._sample_int_inclusive(rng, "baseline_radius_min", "baseline_radius_max"),
             )
             self._draw_ellipsoid(mask, center, radii)
 
@@ -73,37 +114,43 @@ class SyntheticTumorDataset(Dataset):
         if len(coords) == 0:
             return out
 
-        n_seeds = int(rng.integers(1, 4))
+        n_seeds = self._sample_int_inclusive(rng, "growth_seed_min", "growth_seed_max")
         pick_idx = rng.integers(0, len(coords), size=n_seeds)
 
         for idx in pick_idx:
             cx, cy, cz = coords[idx]
             radii = (
-                int(rng.integers(2, 6)),
-                int(rng.integers(2, 6)),
-                int(rng.integers(2, 6)),
+                self._sample_int_inclusive(rng, "growth_radius_min", "growth_radius_max"),
+                self._sample_int_inclusive(rng, "growth_radius_min", "growth_radius_max"),
+                self._sample_int_inclusive(rng, "growth_radius_min", "growth_radius_max"),
             )
             self._draw_ellipsoid(out, (int(cx), int(cy), int(cz)), radii)
 
         # Mild random shift to imitate anisotropic-looking drift.
-        if rng.random() < 0.35:
+        if rng.random() < float(self.params["shift_prob"]):
+            shift_max = max(1, int(self.params["shift_voxel_max"]))
             shift = (
-                int(rng.integers(-2, 3)),
-                int(rng.integers(-2, 3)),
-                int(rng.integers(-2, 3)),
+                int(rng.integers(-shift_max, shift_max + 1)),
+                int(rng.integers(-shift_max, shift_max + 1)),
+                int(rng.integers(-shift_max, shift_max + 1)),
             )
             shifted = np.roll(out, shift=shift, axis=(0, 1, 2))
             out = np.maximum(out, shifted)
 
         # Optional small satellite focus.
-        if rng.random() < 0.2:
+        if rng.random() < float(self.params["satellite_prob"]):
             anchor = coords[int(rng.integers(0, len(coords)))]
-            offset = rng.integers(-10, 11, size=3)
+            off = max(1, int(self.params["satellite_offset_max"]))
+            offset = rng.integers(-off, off + 1, size=3)
             c = np.clip(anchor + offset, 4, np.array(self.shape) - 5)
             self._draw_ellipsoid(
                 out,
                 (int(c[0]), int(c[1]), int(c[2])),
-                (int(rng.integers(1, 3)), int(rng.integers(1, 3)), int(rng.integers(1, 3))),
+                (
+                    self._sample_int_inclusive(rng, "satellite_radius_min", "satellite_radius_max"),
+                    self._sample_int_inclusive(rng, "satellite_radius_min", "satellite_radius_max"),
+                    self._sample_int_inclusive(rng, "satellite_radius_min", "satellite_radius_max"),
+                ),
             )
 
         return out
@@ -112,8 +159,22 @@ class SyntheticTumorDataset(Dataset):
         baseline = self._make_baseline(rng)
 
         # Conditional scalar: larger delta_t means more growth steps.
-        delta_t = float(rng.uniform(0.2, 1.0))
-        n_steps = int(2 + np.round(delta_t * 4))  # 2..6 steps
+        dt_min = float(self.params["delta_t_min"])
+        dt_max = float(self.params["delta_t_max"])
+        if dt_max < dt_min:
+            dt_max = dt_min
+        delta_t = float(rng.uniform(dt_min, dt_max))
+
+        gs_min = int(self.params["growth_steps_min"])
+        gs_max = int(self.params["growth_steps_max"])
+        if gs_max < gs_min:
+            gs_max = gs_min
+        if dt_max == dt_min:
+            alpha = 0.0
+        else:
+            alpha = (delta_t - dt_min) / (dt_max - dt_min)
+        n_steps = int(round(gs_min + alpha * (gs_max - gs_min)))
+        n_steps = max(gs_min, min(gs_max, n_steps))
 
         future = baseline.copy()
         for _ in range(n_steps):
@@ -138,15 +199,19 @@ class SyntheticTumorDataset(Dataset):
 
 
 def make_dataloaders(cfg: Dict):
+    dataset_params = dict(cfg.get("dataset_params", {}))
+
     train_ds = SyntheticTumorDataset(
         num_samples=cfg["train_samples"],
         volume_shape=tuple(cfg["volume_shape"]),
         seed=int(cfg.get("seed", 42)),
+        params=dataset_params,
     )
     val_ds = SyntheticTumorDataset(
         num_samples=cfg["val_samples"],
         volume_shape=tuple(cfg["volume_shape"]),
         seed=int(cfg.get("seed", 42)) + 1,
+        params=dataset_params,
     )
 
     train_loader = DataLoader(

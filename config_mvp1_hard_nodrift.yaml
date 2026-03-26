@@ -1,0 +1,39 @@
+batch_size: 1
+device: auto
+epochs: 10
+learning_rate: 0.0001
+output_dir: outputs/mvp1_hard_nodrift
+seed: 42
+threshold: 0.5
+train_samples: 80
+val_samples: 20
+volume_shape:
+  - 32
+  - 32
+  - 32
+
+use_drift_loss: false
+lambda_drift: 0.0
+drift_temperature: 0.2
+drift_feature_pool: 2
+
+dataset_params:
+  baseline_components_min: 1
+  baseline_components_max: 3
+  baseline_radius_min: 2
+  baseline_radius_max: 7
+  center_margin: 8
+  growth_seed_min: 2
+  growth_seed_max: 5
+  growth_radius_min: 2
+  growth_radius_max: 6
+  shift_prob: 0.55
+  shift_voxel_max: 3
+  satellite_prob: 0.35
+  satellite_offset_max: 14
+  satellite_radius_min: 1
+  satellite_radius_max: 3
+  delta_t_min: 0.2
+  delta_t_max: 1.2
+  growth_steps_min: 2
+  growth_steps_max: 8

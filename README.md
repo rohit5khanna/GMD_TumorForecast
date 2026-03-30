@@ -22,6 +22,8 @@ This folder is the minimal PyTorch scaffold for Phase 1/2.
 - `config_mvp1_stageA_nodrift.yaml`: matched Stage A no-drift control
 - `config_mvp1_stageG_local.yaml`: Experiment G local-token drift config
 - `config_mvp1_stageG_local_nodrift.yaml`: matched Experiment G no-drift control
+- `config_mvp1_stageH_component.yaml`: Experiment H component-aware drift config
+- `config_mvp1_stageH_component_nodrift.yaml`: matched Experiment H no-drift control
 - `MVP1_PROTOCOL.md`: exact multi-seed Colab protocol for matched hard-synthetic runs
 - `RESULTS_LOG.md`: experiment history and aggregate metrics
 - `ARCHITECTURE_DIAGRAMS.md`: shareable Mermaid diagrams of the pipeline
@@ -57,6 +59,15 @@ python train.py --config config_mvp1_stageG_local_nodrift.yaml
 python eval.py --config config_mvp1_stageG_local_nodrift.yaml --ckpt outputs/mvp1_stageG_local_nodrift/model_best.pt --split val
 ```
 
+Experiment H (component-aware drift):
+```bash
+python train.py --config config_mvp1_stageH_component.yaml
+python eval.py --config config_mvp1_stageH_component.yaml --ckpt outputs/mvp1_stageH_component/model_best.pt --split val
+
+python train.py --config config_mvp1_stageH_component_nodrift.yaml
+python eval.py --config config_mvp1_stageH_component_nodrift.yaml --ckpt outputs/mvp1_stageH_component_nodrift/model_best.pt --split val
+```
+
 ## Drift Ablation Knobs (Incremental Mods 1-7)
 - `drift_use_memory_bank`, `drift_neg_bank_size` : stronger negatives (#1)
 - `drift_lambda_warmup_epochs` : lambda warmup (#4)
@@ -70,3 +81,6 @@ python eval.py --config config_mvp1_stageG_local_nodrift.yaml --ckpt outputs/mvp
 - `token_pos_weight`, `token_neg_weight` : local attraction/repulsion weights
 - `token_use_memory_bank`, `token_neg_bank_size` : local hard negative bank
 - `token_feature_source`, `token_feature_key` : local feature source (e.g. `latent:dec1`)
+- `use_component_drift`, `lambda_component_drift` : component-aware drift (Experiment H)
+- `component_max_components`, `component_sigma`, `component_min_voxels` : component window construction
+- `component_off_target_weight` : off-component mass penalty strength

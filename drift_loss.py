@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -309,5 +310,159 @@ def local_token_drift_loss(
     stats = {
         "local_token_field_l2": float(v.pow(2).mean().item()),
         "local_token_count": float(n_tokens),
+    }
+    return loss, stats
+
+
+def _build_gaussian_component_windows(
+    shape: tuple[int, int, int],
+    centers: list[tuple[float, float, float]],
+    sigma: float,
+    device: torch.device,
+) -> torch.Tensor:
+    if len(centers) == 0:
+        return torch.zeros((0, *shape), device=device, dtype=torch.float32)
+
+    h, w, d = shape
+    yy, xx, zz = torch.meshgrid(
+        torch.arange(h, device=device, dtype=torch.float32),
+        torch.arange(w, device=device, dtype=torch.float32),
+        torch.arange(d, device=device, dtype=torch.float32),
+        indexing="ij",
+    )
+    sigma2 = max(float(sigma), 1e-3) ** 2
+
+    windows = []
+    for cy, cx, cz in centers:
+        dist2 = (yy - float(cy)) ** 2 + (xx - float(cx)) ** 2 + (zz - float(cz)) ** 2
+        g = torch.exp(-dist2 / (2.0 * sigma2))
+        g = g / (g.sum() + 1e-8)
+        windows.append(g)
+    return torch.stack(windows, dim=0)
+
+
+def _extract_component_centers(
+    target_3d: np.ndarray,
+    max_components: int,
+    min_voxels: int,
+) -> list[tuple[float, float, float]]:
+    try:
+        from scipy import ndimage as ndi  # type: ignore
+    except Exception:
+        ndi = None
+
+    mask = (target_3d > 0.5).astype(np.uint8)
+    if mask.sum() == 0:
+        return []
+
+    centers: list[tuple[float, float, float]] = []
+    if ndi is None:
+        coords = np.argwhere(mask > 0)
+        c = coords.mean(axis=0)
+        return [(float(c[0]), float(c[1]), float(c[2]))]
+
+    labels, num = ndi.label(mask)
+    if num <= 0:
+        coords = np.argwhere(mask > 0)
+        c = coords.mean(axis=0)
+        return [(float(c[0]), float(c[1]), float(c[2]))]
+
+    comp_sizes = []
+    for i in range(1, num + 1):
+        size = int((labels == i).sum())
+        if size >= int(min_voxels):
+            comp_sizes.append((i, size))
+    if len(comp_sizes) == 0:
+        coords = np.argwhere(mask > 0)
+        c = coords.mean(axis=0)
+        return [(float(c[0]), float(c[1]), float(c[2]))]
+
+    comp_sizes.sort(key=lambda x: x[1], reverse=True)
+    keep = comp_sizes[: max(1, int(max_components))]
+    for i, _ in keep:
+        com = ndi.center_of_mass(mask, labels, i)
+        centers.append((float(com[0]), float(com[1]), float(com[2])))
+    return centers
+
+
+def component_aware_loss_from_logits(
+    logits: torch.Tensor,
+    target_mask: torch.Tensor,
+    max_components: int = 3,
+    component_sigma: float = 3.0,
+    min_component_voxels: int = 10,
+    off_target_weight: float = 0.25,
+    delta_t_map: torch.Tensor | None = None,
+    delta_t_beta: float = 0.0,
+    delta_t_center: float = 0.6,
+) -> tuple[torch.Tensor, Dict[str, float]]:
+    """
+    Component-aware loss for multifocal growth:
+    - build Gaussian windows at target connected-component centers
+    - match predicted mass in each component window
+    - penalize off-component excess mass
+    """
+    probs = torch.sigmoid(logits)
+    target = target_mask.float()
+    bsz = int(target.shape[0])
+    device = target.device
+
+    per_sample_losses = []
+    n_components_total = 0.0
+    for b in range(bsz):
+        pred_b = probs[b, 0]   # [H, W, D]
+        targ_b = target[b, 0]  # [H, W, D]
+        targ_np = targ_b.detach().cpu().numpy()
+
+        centers = _extract_component_centers(
+            target_3d=targ_np,
+            max_components=max_components,
+            min_voxels=min_component_voxels,
+        )
+        windows = _build_gaussian_component_windows(
+            shape=tuple(targ_b.shape),
+            centers=centers,
+            sigma=component_sigma,
+            device=device,
+        )
+
+        n_components_total += float(max(1, windows.shape[0]))
+        if windows.shape[0] == 0:
+            # Fallback to global mean absolute difference.
+            per_sample_losses.append(torch.mean(torch.abs(pred_b - targ_b)))
+            continue
+
+        # Mass matching per target component.
+        pred_mass = (windows * pred_b.unsqueeze(0)).sum(dim=(1, 2, 3))
+        targ_mass = (windows * targ_b.unsqueeze(0)).sum(dim=(1, 2, 3))
+        loss_mass = torch.mean(torch.abs(pred_mass - targ_mass))
+
+        # Off-component control.
+        union = windows.max(dim=0).values.clamp(0.0, 1.0)
+        pred_off = (pred_b * (1.0 - union)).mean()
+        targ_off = (targ_b * (1.0 - union)).mean()
+        loss_off = torch.abs(pred_off - targ_off)
+
+        # Coverage consistency in component windows.
+        pred_cov = (pred_b * union).sum() / (pred_b.sum() + 1e-8)
+        targ_cov = (targ_b * union).sum() / (targ_b.sum() + 1e-8)
+        loss_cov = torch.abs(pred_cov - targ_cov)
+
+        per_sample_losses.append(loss_mass + float(off_target_weight) * loss_off + 0.5 * loss_cov)
+
+    losses = torch.stack(per_sample_losses, dim=0)
+
+    dt_scale = _delta_t_scale(
+        delta_t_map=delta_t_map,
+        batch_size=bsz,
+        delta_t_beta=delta_t_beta,
+        delta_t_center=delta_t_center,
+        device=device,
+    )
+    loss = (losses * dt_scale).mean()
+
+    stats = {
+        "component_count_mean": float(n_components_total / max(bsz, 1)),
+        "component_dt_scale_mean": float(dt_scale.mean().item()),
     }
     return loss, stats

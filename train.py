@@ -13,7 +13,12 @@ import torch.nn.functional as F
 import yaml
 
 from dataset import make_dataloaders
-from drift_loss import DriftFeatureBank, drifting_loss_from_logits, local_token_drift_loss
+from drift_loss import (
+    DriftFeatureBank,
+    component_aware_loss_from_logits,
+    drifting_loss_from_logits,
+    local_token_drift_loss,
+)
 from model import OneShotPredictor
 
 
@@ -134,6 +139,18 @@ def main() -> None:
     if token_feature_source not in {"probs", "latent"}:
         raise ValueError("token_feature_source must be one of {'probs', 'latent'}")
 
+    use_component_drift = bool(cfg.get("use_component_drift", False))
+    lambda_component_drift = float(cfg.get("lambda_component_drift", 0.0))
+    component_lambda_warmup_epochs = int(
+        cfg.get("component_lambda_warmup_epochs", drift_lambda_warmup_epochs)
+    )
+    component_max_components = int(cfg.get("component_max_components", 3))
+    component_sigma = float(cfg.get("component_sigma", 3.0))
+    component_min_voxels = int(cfg.get("component_min_voxels", 10))
+    component_off_target_weight = float(cfg.get("component_off_target_weight", 0.25))
+    component_delta_t_beta = float(cfg.get("component_delta_t_beta", drift_delta_t_beta))
+    component_delta_t_center = float(cfg.get("component_delta_t_center", drift_delta_t_center))
+
     global_feature_bank = DriftFeatureBank(max_items=drift_neg_bank_size) if drift_use_memory_bank else None
     local_feature_bank = DriftFeatureBank(max_items=token_neg_bank_size) if token_use_memory_bank else None
 
@@ -154,6 +171,13 @@ def main() -> None:
         f"stride={token_stride if token_stride is not None else token_patch_size} | "
         f"src={token_feature_source}:{token_feature_key}"
     )
+    print(
+        "[INFO] Component drift: "
+        f"{'ON' if use_component_drift else 'OFF'} | "
+        f"lambda_comp={lambda_component_drift:.4f} | "
+        f"max_comp={component_max_components} | "
+        f"sigma={component_sigma:.2f}"
+    )
 
     best_val_dice = -1.0
     epochs = int(cfg["epochs"])
@@ -161,8 +185,9 @@ def main() -> None:
     for epoch in range(1, epochs + 1):
         model.train()
         running_loss, running_dice, n_batches = 0.0, 0.0, 0
-        running_seg_loss, running_drift_loss, running_local_drift_loss = 0.0, 0.0, 0.0
+        running_seg_loss, running_drift_loss, running_local_drift_loss, running_comp_drift_loss = 0.0, 0.0, 0.0, 0.0
         running_drift_field_l2, running_dt_scale, running_local_field_l2 = 0.0, 0.0, 0.0
+        running_comp_count = 0.0
 
         if drift_lambda_warmup_epochs > 0:
             warm = min(1.0, float(epoch) / float(drift_lambda_warmup_epochs))
@@ -174,6 +199,11 @@ def main() -> None:
             lambda_local_epoch = lambda_local_drift * warm_local
         else:
             lambda_local_epoch = lambda_local_drift
+        if component_lambda_warmup_epochs > 0:
+            warm_comp = min(1.0, float(epoch) / float(component_lambda_warmup_epochs))
+            lambda_comp_epoch = lambda_component_drift * warm_comp
+        else:
+            lambda_comp_epoch = lambda_component_drift
 
         for xb, yb in train_loader:
             xb = xb.to(device)
@@ -240,10 +270,27 @@ def main() -> None:
                 local_drift_loss = torch.zeros((), device=device)
                 local_stats = {"local_token_field_l2": 0.0}
 
+            if use_component_drift:
+                component_drift_loss, component_stats = component_aware_loss_from_logits(
+                    logits=logits,
+                    target_mask=yb,
+                    max_components=component_max_components,
+                    component_sigma=component_sigma,
+                    min_component_voxels=component_min_voxels,
+                    off_target_weight=component_off_target_weight,
+                    delta_t_map=xb[:, 1:2],
+                    delta_t_beta=component_delta_t_beta,
+                    delta_t_center=component_delta_t_center,
+                )
+            else:
+                component_drift_loss = torch.zeros((), device=device)
+                component_stats = {"component_count_mean": 0.0}
+
             loss = (
                 seg_loss
                 + lambda_drift_epoch * drift_loss
                 + lambda_local_epoch * local_drift_loss
+                + lambda_comp_epoch * component_drift_loss
             )
 
             loss.backward()
@@ -256,9 +303,11 @@ def main() -> None:
             running_seg_loss += float(seg_loss.item())
             running_drift_loss += float(drift_loss.item())
             running_local_drift_loss += float(local_drift_loss.item())
+            running_comp_drift_loss += float(component_drift_loss.item())
             running_drift_field_l2 += float(drift_stats.get("drift_field_l2", 0.0))
             running_dt_scale += float(drift_stats.get("dt_scale_mean", 1.0))
             running_local_field_l2 += float(local_stats.get("local_token_field_l2", 0.0))
+            running_comp_count += float(component_stats.get("component_count_mean", 0.0))
             running_dice += float(dice.item())
             n_batches += 1
 
@@ -266,8 +315,10 @@ def main() -> None:
         train_seg_loss = running_seg_loss / max(n_batches, 1)
         train_drift_loss = running_drift_loss / max(n_batches, 1)
         train_local_drift_loss = running_local_drift_loss / max(n_batches, 1)
+        train_comp_drift_loss = running_comp_drift_loss / max(n_batches, 1)
         train_drift_field_l2 = running_drift_field_l2 / max(n_batches, 1)
         train_local_field_l2 = running_local_field_l2 / max(n_batches, 1)
+        train_comp_count = running_comp_count / max(n_batches, 1)
         train_dt_scale = running_dt_scale / max(n_batches, 1)
         train_dice = running_dice / max(n_batches, 1)
 
@@ -281,11 +332,14 @@ def main() -> None:
             f"train_seg={train_seg_loss:.4f} "
             f"train_drift={train_drift_loss:.4f} "
             f"train_local={train_local_drift_loss:.4f} "
+            f"train_comp={train_comp_drift_loss:.4f} "
             f"drift_l2={train_drift_field_l2:.4f} "
             f"local_l2={train_local_field_l2:.4f} "
+            f"comp_n={train_comp_count:.2f} "
             f"dt_scale={train_dt_scale:.3f} "
             f"lambda_t={lambda_drift_epoch:.4f} "
             f"lambda_local={lambda_local_epoch:.4f} "
+            f"lambda_comp={lambda_comp_epoch:.4f} "
             f"train_dice={train_dice:.4f} "
             f"val_loss={val_loss:.4f} val_dice={val_dice:.4f}"
         )

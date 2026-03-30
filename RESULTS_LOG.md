@@ -329,3 +329,14 @@
 - Added optional local token drift loss path in training.
 - Added Experiment G configs (drift + matched no-drift).
 - Next action: seed-42 screen followed by 3-seed confirm if promoted.
+
+---
+
+## Iteration 16: Experiment H (Component-Aware Drift) - Code Integration
+- Date: March 30, 2026
+- Objective: add component-aware mass/coverage loss to better model multifocal/satellite behavior.
+
+### Implementation Status
+- Added optional component-aware drift loss path in training.
+- Added Experiment H configs (drift + matched no-drift).
+- Next action: seed-42 screen followed by 3-seed confirm if promoted.

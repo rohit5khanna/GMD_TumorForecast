@@ -1,4 +1,4 @@
-"""One-shot predictor model."""
+"""One-shot predictor model(s)."""
 
 from __future__ import annotations
 
@@ -70,8 +70,58 @@ class OneShotPredictor(nn.Module):
         return logits
 
 
+class ResidualRefinePredictor(nn.Module):
+    """
+    Two-stage one-shot predictor:
+    1) coarse logits from baseline U-Net
+    2) residual refinement logits from (dec1 features + baseline mask + coarse probs)
+    Final logits = coarse + residual.
+    """
+
+    def __init__(self, in_channels: int = 2, base_channels: int = 16):
+        super().__init__()
+        self.coarse_model = OneShotPredictor(in_channels=in_channels, base_channels=base_channels)
+        self.refine_block = ConvBlock3D(base_channels + 2, base_channels)
+        self.refine_head = nn.Conv3d(base_channels, 1, kernel_size=1)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        return_features: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        coarse_logits, coarse_feats = self.coarse_model(x, return_features=True)
+        coarse_probs = torch.sigmoid(coarse_logits)
+        baseline = x[:, :1]
+
+        refine_in = torch.cat([coarse_feats["dec1"], baseline, coarse_probs], dim=1)
+        refine_feat = self.refine_block(refine_in)
+        refine_logits = self.refine_head(refine_feat)
+
+        logits = coarse_logits + refine_logits
+        if return_features:
+            out_feats = dict(coarse_feats)
+            out_feats["coarse_logits"] = coarse_logits
+            out_feats["refine_feat"] = refine_feat
+            return logits, out_feats
+        return logits
+
+
+def build_model(cfg: dict, in_channels: int = 2) -> nn.Module:
+    model_type = str(cfg.get("model_type", "unet_baseline")).lower()
+    base_channels = int(cfg.get("base_channels", 16))
+
+    if model_type in {"unet_baseline", "baseline", "oneshot"}:
+        return OneShotPredictor(in_channels=in_channels, base_channels=base_channels)
+    if model_type in {"unet_residual_refine", "residual_refine", "refine"}:
+        return ResidualRefinePredictor(in_channels=in_channels, base_channels=base_channels)
+    raise ValueError(
+        "Unknown model_type. Supported: "
+        "{'unet_baseline','unet_residual_refine'}"
+    )
+
+
 if __name__ == "__main__":
-    model = OneShotPredictor(in_channels=2, base_channels=8)
+    model = ResidualRefinePredictor(in_channels=2, base_channels=8)
     x = torch.randn(2, 2, 64, 64, 64)
     y = model(x)
     print("input:", x.shape)

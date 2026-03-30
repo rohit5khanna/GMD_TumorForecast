@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import yaml
 
 from dataset import make_dataloaders
-from model import OneShotPredictor
+from model import build_model
 
 
 def get_device(cfg: Dict) -> torch.device:
@@ -97,7 +97,9 @@ def main() -> None:
     train_loader, val_loader = make_dataloaders(cfg)
     loader = val_loader if args.split == "val" else train_loader
 
-    model = OneShotPredictor(in_channels=2, base_channels=16).to(device)
+    model = build_model(cfg, in_channels=2).to(device)
+    model_type = str(cfg.get("model_type", "unet_baseline"))
+    print(f"[INFO] Model: {model_type}")
     checkpoint = torch.load(args.ckpt, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
 

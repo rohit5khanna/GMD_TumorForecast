@@ -351,3 +351,109 @@
 - Added optional SDF-boundary drift loss path in training.
 - Added Experiment I configs (drift + matched no-drift).
 - Next action: seed-42 screen followed by 3-seed confirm if promoted.
+
+---
+
+## Iteration 18: Experiment G Confirm (Local Token Drift)
+- Date: March 30, 2026
+- Setup: 3-seed matched confirm, local token drift enabled.
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | mean_bce | mean_sec_per_sample | n |
+|---|---:|---:|---:|---:|---:|
+| stageG_drift | 0.6378366649 | 0.0270848267 | 0.4230316192 | 0.0136473888 | 3 |
+| stageG_nodrift | 0.6336624732 | 0.0265522285 | 0.4335100760 | 0.0154487262 | 3 |
+
+- Dice delta (`drift - no_drift`): `+0.0041741918`
+
+### Interpretation
+- Positive and consistent with prior drift gains, but still below breakthrough threshold.
+
+---
+
+## Iteration 19: Experiment H Confirm (Component-Aware Drift)
+- Date: March 30, 2026
+- Setup: 3-seed matched confirm, component-aware loss enabled.
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | mean_bce | mean_sec_per_sample | n |
+|---|---:|---:|---:|---:|---:|
+| stageH_drift | 0.6362655501 | 0.0276853852 | 0.4168270171 | 0.0134409251 | 3 |
+| stageH_nodrift | 0.6340661178 | 0.0258517655 | 0.4321894219 | 0.0135054231 | 3 |
+
+- Dice delta (`drift - no_drift`): `+0.0021994323`
+
+### Interpretation
+- Helps BCE strongly, but Dice lift is modest and below Stage G.
+
+---
+
+## Iteration 20: Experiment I Confirm (SDF Boundary Drift)
+- Date: March 30, 2026
+- Setup: 3-seed matched confirm, SDF-boundary loss enabled.
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | mean_bce | mean_sec_per_sample | n |
+|---|---:|---:|---:|---:|---:|
+| stageI_drift | 0.6371972223 | 0.0271588641 | 0.4215367168 | 0.0139689959 | 3 |
+| stageI_nodrift | 0.6336325626 | 0.0261611148 | 0.4325481584 | 0.0134300839 | 3 |
+
+- Dice delta (`drift - no_drift`): `+0.0035646598`
+
+### Interpretation
+- Solid positive drift effect with better BCE, but still below breakout criterion.
+
+---
+
+## Updated Synthetic Takeaway (A-I)
+- Experiments A through I are now implemented and tested.
+- Best confirmed hard-synthetic Dice delta remains in the `~+0.003` to `~+0.005` range.
+- Current best confirmed hard-synthetic delta remains Iteration 7 (`+0.0047182987`), with Stage G (`+0.0041741918`) close.
+- These are meaningful but not yet breakthrough-level gains for automatic promotion to real-data scaling.
+
+---
+
+## Iteration 21: Stage J (G + I Combined) and Expanded Search
+- Date: March 30, 2026
+- Objective: combine local-token + SDF drift and test wider hyperparameter space under fast Colab GPU runs.
+
+### Stage J Baseline Confirm (3 seeds)
+| variant | mean_dice | std_dice | mean_bce | mean_sec_per_sample | n |
+|---|---:|---:|---:|---:|---:|
+| stageJ_drift | 0.6360222300 | 0.0269908257 | 0.4237260958 | 0.0151318184 | 3 |
+| stageJ_nodrift | 0.6334232330 | 0.0265732481 | 0.4322387228 | 0.0143335956 | 3 |
+
+- Dice delta (`drift - no_drift`): `+0.0025989970`
+
+### Expanded Search (coarse -> top-k confirm)
+- Best confirmed config from expanded search:
+  - `lambda_drift=0.1`, `lambda_local_drift=0.2`, `lambda_sdf_drift=0.2`
+  - `drift_temperature=0.2`, `token_temperature=0.05`
+  - `sdf_band_width=3.0`, `sdf_logit_scale=4.0`
+  - `token_patch_size=8`, `drift_pool_scales=[2,4]`, `drift_boundary_gamma=0.0`
+- Best mean delta across 3 seeds: `+0.0031437814`
+
+### Interpretation
+- Larger search improved tuning confidence but did not change the ceiling.
+- Drift gains remain modest and seed-sensitive.
+
+---
+
+## Iteration 22: Stage K (Architecture Tweak) - Code Integration
+- Date: March 30, 2026
+- Objective: test one architecture change beyond loss-only tuning.
+
+### Implementation Status
+- Added model switch via `model_type` and `base_channels`.
+- Added `unet_residual_refine` architecture:
+  - coarse logits from baseline U-Net
+  - residual refinement logits from `(dec1 features + baseline + coarse probs)`
+  - final logits = `coarse + residual`
+- Updated `train.py` and `eval.py` to instantiate model from config.
+- Added Stage K configs:
+  - `config_mvp1_stageK_arch.yaml`
+  - `config_mvp1_stageK_arch_nodrift.yaml`
+
+### Next Action
+- Run seed-42 matched screen for Stage K.
+- Promote to 3-seed confirm if seed-42 delta is strong.

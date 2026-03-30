@@ -20,7 +20,7 @@ from drift_loss import (
     local_token_drift_loss,
     sdf_boundary_drift_loss_from_logits,
 )
-from model import OneShotPredictor
+from model import build_model
 
 
 def set_seed(seed: int) -> None:
@@ -102,7 +102,10 @@ def main() -> None:
 
     train_loader, val_loader = make_dataloaders(cfg)
 
-    model = OneShotPredictor(in_channels=2, base_channels=16).to(device)
+    model = build_model(cfg, in_channels=2).to(device)
+    model_type = str(cfg.get("model_type", "unet_baseline"))
+    n_params_m = sum(p.numel() for p in model.parameters()) / 1e6
+    print(f"[INFO] Model: {model_type} | params={n_params_m:.2f}M")
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg["learning_rate"]))
     use_drift_loss = bool(cfg.get("use_drift_loss", False))
     lambda_drift = float(cfg.get("lambda_drift", 0.1))

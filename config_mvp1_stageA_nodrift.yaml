@@ -26,6 +26,21 @@ drift_delta_t_center: 0.6
 drift_use_memory_bank: true
 drift_neg_bank_size: 64
 drift_feature_source: probs
+use_local_token_drift: false
+lambda_local_drift: 0.0
+local_lambda_warmup_epochs: 4
+token_patch_size: 4
+token_stride: 4
+token_temperature: 0.1
+token_pos_weight: 1.0
+token_neg_weight: 1.0
+token_boundary_gamma: 0.0
+token_delta_t_beta: 0.0
+token_delta_t_center: 0.6
+token_use_memory_bank: true
+token_neg_bank_size: 64
+token_feature_source: latent
+token_feature_key: dec1
 
 dataset_params:
   baseline_components_min: 1

@@ -120,6 +120,18 @@ def _delta_t_scale(
     return torch.clamp(scale, min=0.1)
 
 
+def _tokenize_volume(
+    volume: torch.Tensor,
+    patch_size: int = 4,
+    stride: int | None = None,
+) -> torch.Tensor:
+    p = max(1, int(patch_size))
+    s = p if stride is None else max(1, int(stride))
+    pooled = F.avg_pool3d(volume, kernel_size=p, stride=s)
+    b, c, h, w, d = pooled.shape
+    return pooled.permute(0, 2, 3, 4, 1).reshape(b, h * w * d, c)
+
+
 def drifting_loss_from_logits(
     logits: torch.Tensor,
     target_mask: torch.Tensor,
@@ -210,5 +222,92 @@ def drifting_loss_from_logits(
     stats = {
         "drift_field_l2": float(v.pow(2).mean().item()),
         "dt_scale_mean": float(dt_scale.mean().item()),
+    }
+    return loss, stats
+
+
+def local_token_drift_loss(
+    pred_feature_map: torch.Tensor,
+    target_mask: torch.Tensor,
+    temperature: float = 0.1,
+    patch_size: int = 4,
+    token_stride: int | None = None,
+    pos_weight: float = 1.0,
+    neg_weight: float = 1.0,
+    boundary_gamma: float = 0.0,
+    delta_t_map: torch.Tensor | None = None,
+    delta_t_beta: float = 0.0,
+    delta_t_center: float = 0.6,
+    feature_bank: DriftFeatureBank | None = None,
+) -> tuple[torch.Tensor, Dict[str, float]]:
+    """
+    Local-token drift loss for Experiment G.
+    - Works on local pooled tokens from latent feature maps.
+    - Attraction/repulsion is computed in token feature space.
+    """
+    target_mask = target_mask.float()
+    bsz = int(target_mask.shape[0])
+    device = target_mask.device
+
+    w_boundary = _boundary_weight_map(target_mask, boundary_gamma=boundary_gamma)
+    pred_weighted = pred_feature_map * w_boundary
+    target_weighted = target_mask * w_boundary
+    if target_weighted.shape[1] != pred_weighted.shape[1]:
+        target_weighted = target_weighted.repeat(1, pred_weighted.shape[1], 1, 1, 1)
+
+    tok_gen = _tokenize_volume(pred_weighted, patch_size=patch_size, stride=token_stride)
+    tok_pos = _tokenize_volume(target_weighted, patch_size=patch_size, stride=token_stride)
+    tok_mask = _tokenize_volume(target_mask, patch_size=patch_size, stride=token_stride).squeeze(-1)
+
+    # Normalize token vectors for stability.
+    tok_gen = F.normalize(tok_gen, dim=-1, eps=1e-6)
+    tok_pos = F.normalize(tok_pos, dim=-1, eps=1e-6)
+
+    b, n_tokens, c = tok_gen.shape
+    feat_gen = tok_gen.reshape(b * n_tokens, c)
+    x_old = feat_gen.detach()
+    feat_pos = tok_pos.reshape(b * n_tokens, c).detach()
+
+    if x_old.shape[0] > 1:
+        feat_neg = torch.roll(x_old, shifts=1, dims=0)
+    else:
+        feat_neg = x_old
+
+    if feature_bank is not None:
+        bank_neg = feature_bank.sample(n_items=int(x_old.shape[0]))
+        if bank_neg is not None and bank_neg.shape[1] == x_old.shape[1]:
+            feat_neg = torch.cat([feat_neg, bank_neg.to(x_old.device)], dim=0)
+
+    v = compute_drifting_field(
+        x_gen=x_old,
+        y_pos=feat_pos,
+        y_neg=feat_neg,
+        temperature=temperature,
+        pos_weight=pos_weight,
+        neg_weight=neg_weight,
+    )
+
+    goal = x_old + v.detach()
+    per_token = (feat_gen - goal).pow(2).mean(dim=1)
+
+    # Focus drift slightly more on tumor-containing local regions.
+    token_weights = 1.0 + tok_mask.reshape(-1)
+
+    dt_scale = _delta_t_scale(
+        delta_t_map=delta_t_map,
+        batch_size=bsz,
+        delta_t_beta=delta_t_beta,
+        delta_t_center=delta_t_center,
+        device=device,
+    )
+    dt_scale_token = dt_scale.repeat_interleave(n_tokens)
+    loss = (per_token * token_weights * dt_scale_token).mean()
+
+    if feature_bank is not None:
+        feature_bank.add(x_old)
+
+    stats = {
+        "local_token_field_l2": float(v.pow(2).mean().item()),
+        "local_token_count": float(n_tokens),
     }
     return loss, stats

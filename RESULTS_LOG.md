@@ -207,4 +207,125 @@
 3. Keep matched no-drift control unchanged for fair deltas.
 
 ### Status
-- Stage A code path added; pending run.
+- Completed: Stage A through Stage F runs are logged in Iterations 9-14 below.
+
+---
+
+## Iteration 9: Stage A Confirm (Mods #1 + #4)
+- Date: March 26, 2026
+- Setup: Stage A = stronger negatives (memory bank) + lambda warmup, seeds `42, 43, 44`.
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | mean_bce | mean_sec_per_sample | n |
+|---|---:|---:|---:|---:|---:|
+| stageA_drift | 0.6346362849 | 0.0280411552 | 0.4274779131 | 0.0141928587 | 3 |
+| stageA_nodrift | 0.6337653587 | 0.0265588378 | 0.4323370179 | 0.0153874444 | 3 |
+
+- Dice delta (`drift - no_drift`): `+0.0008709262`
+
+### Interpretation
+- Stage A is effectively neutral (gain is very small vs seed variance).
+
+---
+
+## Iteration 10: Stage B Confirm (Stage A + Mod #3)
+- Date: March 26, 2026
+- Setup: Added separate attraction/repulsion weights with `pos_weight=1.2`, `neg_weight=0.8`, seeds `42, 43, 44`.
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | mean_bce | mean_sec_per_sample | n |
+|---|---:|---:|---:|---:|---:|
+| stageB_drift | 0.6357185006 | 0.0275541027 | 0.4265960058 | 0.0153262412 | 3 |
+| stageB_nodrift | 0.6333197842 | 0.0259367227 | 0.4335639666 | 0.0157830102 | 3 |
+
+- Dice delta (`drift - no_drift`): `+0.0023987164`
+
+### Interpretation
+- Stage B is a modest improvement over Stage A, but still small overall.
+
+---
+
+## Iteration 11: Stage C Screen (Stage B + Mod #2)
+- Date: March 26, 2026
+- Setup: One-seed screen (seed 42), multiscale pooled features.
+
+### Trials (seed 42)
+| trial | pool_scales | dice | bce_loss | sec_per_sample |
+|---:|---|---:|---:|---:|
+| 0 | [2, 4] | 0.6292674065 | 0.4039867640 | 0.0138124347 |
+| 1 | [2, 6] | 0.6301793039 | 0.4042026639 | 0.0143542097 |
+| 2 | [2, 4, 8] | 0.6305581570 | 0.4011632502 | 0.0192243318 |
+
+### Interpretation
+- Stage C did not improve over Stage B screen and increased runtime in the best variant.
+- Stage C was not promoted to 3-seed confirm.
+
+---
+
+## Iteration 12: Stage D Confirm (Stage B + Mod #5)
+- Date: March 26, 2026
+- Setup: Boundary-aware drift enabled with `boundary_gamma=2.0`, seeds `42, 43, 44`.
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | mean_bce | mean_sec_per_sample | n |
+|---|---:|---:|---:|---:|---:|
+| stageD_drift | 0.6359375656 | 0.0253504385 | 0.4306476593 | 0.0163082939 | 3 |
+| stageD_nodrift | 0.6335843553 | 0.0265542224 | 0.4323927214 | 0.0145855418 | 3 |
+
+- Dice delta (`drift - no_drift`): `+0.0023532103`
+
+### Interpretation
+- Similar gain to Stage B, but slower; not a clear upgrade over simpler Stage B.
+
+---
+
+## Iteration 13: Stage E Confirm (Stage B + Mod #7)
+- Date: March 26, 2026
+- Setup: Time-aware drift scaling with `delta_t_beta=1.5`, `delta_t_center=0.6`, seeds `42, 43, 44`.
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | mean_bce | mean_sec_per_sample | n |
+|---|---:|---:|---:|---:|---:|
+| stageE_drift | 0.6371155560 | 0.0269811778 | 0.4249438087 | 0.0161233642 | 3 |
+| stageE_nodrift | 0.6332782507 | 0.0260515714 | 0.4323130161 | 0.0144320983 | 3 |
+
+- Dice delta (`drift - no_drift`): `+0.0038373053`
+
+### Interpretation
+- Best of staged modifications so far, but still below the tuned hard baseline gain from Iteration 7.
+
+---
+
+## Iteration 14: Stage F Screen (Stage E + Mod #6)
+- Date: March 26, 2026
+- Setup: One-seed screen (seed 42), compare drift feature source `probs` vs `latent`.
+
+### Screen Results (seed 42)
+| variant | drift_feature_source | dice | bce_loss | sec_per_sample |
+|---|---|---:|---:|---:|
+| probs_ref | probs | 0.6366147161 | 0.3989271522 | 0.0187395729 |
+| latent_try | latent | 0.6397397399 | 0.3780892551 | 0.0135357846 |
+
+- Delta (`latent - probs`): `+0.0031250238`
+
+### Interpretation
+- Positive but below the pre-set promotion trigger (`+0.005` on seed screen).
+- Stage F was not promoted to 3-seed confirm.
+
+---
+
+## Synthetic Modification Sweep: Final Takeaway
+- Incremental mods A-F were implemented and tested.
+- Gains on hard synthetic are real but modest (`~+0.001` to `~+0.004` Dice deltas).
+- Most complex staged variants did not clearly outperform the simpler tuned hard baseline from Iteration 7 (`+0.0047182987`).
+
+---
+
+## Iteration 15: Experiment G (Local Token Drift) - Code Integration
+- Date: March 30, 2026
+- Objective: add local token-level drift (decoder feature tokens) to better capture scattered/irregular morphology.
+
+### Implementation Status
+- Added optional local token drift loss path in training.
+- Added Experiment G configs (drift + matched no-drift).
+- Next action: seed-42 screen followed by 3-seed confirm if promoted.

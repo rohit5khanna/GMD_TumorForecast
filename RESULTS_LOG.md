@@ -340,3 +340,14 @@
 - Added optional component-aware drift loss path in training.
 - Added Experiment H configs (drift + matched no-drift).
 - Next action: seed-42 screen followed by 3-seed confirm if promoted.
+
+---
+
+## Iteration 17: Experiment I (SDF Boundary Drift) - Code Integration
+- Date: March 30, 2026
+- Objective: add SDF-boundary loss to better align irregular tumor fronts and boundary geometry.
+
+### Implementation Status
+- Added optional SDF-boundary drift loss path in training.
+- Added Experiment I configs (drift + matched no-drift).
+- Next action: seed-42 screen followed by 3-seed confirm if promoted.

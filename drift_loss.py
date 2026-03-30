@@ -466,3 +466,79 @@ def component_aware_loss_from_logits(
         "component_dt_scale_mean": float(dt_scale.mean().item()),
     }
     return loss, stats
+
+
+def _compute_target_sdf_numpy(mask_np: np.ndarray) -> np.ndarray:
+    """
+    Signed distance field from binary mask.
+    Positive inside tumor, negative outside.
+    """
+    try:
+        from scipy import ndimage as ndi  # type: ignore
+    except Exception:
+        ndi = None
+
+    mask = (mask_np > 0.5).astype(np.uint8)
+    if ndi is None:
+        # Fallback: if SciPy is unavailable, return centered occupancy proxy.
+        return (2.0 * mask.astype(np.float32) - 1.0).astype(np.float32)
+
+    dist_in = ndi.distance_transform_edt(mask)
+    dist_out = ndi.distance_transform_edt(1 - mask)
+    sdf = dist_in - dist_out
+    return sdf.astype(np.float32)
+
+
+def sdf_boundary_drift_loss_from_logits(
+    logits: torch.Tensor,
+    target_mask: torch.Tensor,
+    sdf_band_width: float = 4.0,
+    sdf_clip_value: float = 10.0,
+    sdf_logit_scale: float = 3.0,
+    delta_t_map: torch.Tensor | None = None,
+    delta_t_beta: float = 0.0,
+    delta_t_center: float = 0.6,
+) -> tuple[torch.Tensor, Dict[str, float]]:
+    """
+    SDF/boundary drift loss:
+    - Builds target SDF from ground truth mask.
+    - Compares target signed field to logit-based signed prediction.
+    - Weights errors near the boundary band more strongly.
+    """
+    target = target_mask.float()
+    bsz = int(target.shape[0])
+    device = target.device
+
+    # Differentiable signed proxy from logits.
+    pred_signed = torch.tanh(logits / max(float(sdf_logit_scale), 1e-6))
+
+    sdf_targets = []
+    for b in range(bsz):
+        sdf_np = _compute_target_sdf_numpy(target[b, 0].detach().cpu().numpy())
+        sdf_targets.append(torch.from_numpy(sdf_np))
+    target_sdf = torch.stack(sdf_targets, dim=0).unsqueeze(1).to(device=device, dtype=pred_signed.dtype)
+
+    clip_val = max(float(sdf_clip_value), 1e-6)
+    target_signed = torch.clamp(target_sdf, min=-clip_val, max=clip_val) / clip_val
+
+    # Boundary-focused weighting: larger weight near sdf=0.
+    band = max(float(sdf_band_width), 1e-6)
+    boundary_weight = torch.exp(-torch.abs(target_sdf) / band)
+    boundary_weight = 0.5 + boundary_weight
+
+    per_sample = (boundary_weight * (pred_signed - target_signed).pow(2)).mean(dim=(1, 2, 3, 4))
+
+    dt_scale = _delta_t_scale(
+        delta_t_map=delta_t_map,
+        batch_size=bsz,
+        delta_t_beta=delta_t_beta,
+        delta_t_center=delta_t_center,
+        device=device,
+    )
+    loss = (per_sample * dt_scale).mean()
+
+    stats = {
+        "sdf_boundary_weight_mean": float(boundary_weight.mean().item()),
+        "sdf_dt_scale_mean": float(dt_scale.mean().item()),
+    }
+    return loss, stats

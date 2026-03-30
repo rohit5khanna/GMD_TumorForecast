@@ -24,6 +24,8 @@ This folder is the minimal PyTorch scaffold for Phase 1/2.
 - `config_mvp1_stageG_local_nodrift.yaml`: matched Experiment G no-drift control
 - `config_mvp1_stageH_component.yaml`: Experiment H component-aware drift config
 - `config_mvp1_stageH_component_nodrift.yaml`: matched Experiment H no-drift control
+- `config_mvp1_stageI_sdf.yaml`: Experiment I SDF-boundary drift config
+- `config_mvp1_stageI_sdf_nodrift.yaml`: matched Experiment I no-drift control
 - `MVP1_PROTOCOL.md`: exact multi-seed Colab protocol for matched hard-synthetic runs
 - `RESULTS_LOG.md`: experiment history and aggregate metrics
 - `ARCHITECTURE_DIAGRAMS.md`: shareable Mermaid diagrams of the pipeline
@@ -68,6 +70,15 @@ python train.py --config config_mvp1_stageH_component_nodrift.yaml
 python eval.py --config config_mvp1_stageH_component_nodrift.yaml --ckpt outputs/mvp1_stageH_component_nodrift/model_best.pt --split val
 ```
 
+Experiment I (SDF boundary drift):
+```bash
+python train.py --config config_mvp1_stageI_sdf.yaml
+python eval.py --config config_mvp1_stageI_sdf.yaml --ckpt outputs/mvp1_stageI_sdf/model_best.pt --split val
+
+python train.py --config config_mvp1_stageI_sdf_nodrift.yaml
+python eval.py --config config_mvp1_stageI_sdf_nodrift.yaml --ckpt outputs/mvp1_stageI_sdf_nodrift/model_best.pt --split val
+```
+
 ## Drift Ablation Knobs (Incremental Mods 1-7)
 - `drift_use_memory_bank`, `drift_neg_bank_size` : stronger negatives (#1)
 - `drift_lambda_warmup_epochs` : lambda warmup (#4)
@@ -84,3 +95,5 @@ python eval.py --config config_mvp1_stageH_component_nodrift.yaml --ckpt outputs
 - `use_component_drift`, `lambda_component_drift` : component-aware drift (Experiment H)
 - `component_max_components`, `component_sigma`, `component_min_voxels` : component window construction
 - `component_off_target_weight` : off-component mass penalty strength
+- `use_sdf_boundary_drift`, `lambda_sdf_drift` : SDF-boundary drift (Experiment I)
+- `sdf_band_width`, `sdf_clip_value`, `sdf_logit_scale` : SDF boundary shaping controls

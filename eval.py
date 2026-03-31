@@ -97,9 +97,12 @@ def main() -> None:
     train_loader, val_loader = make_dataloaders(cfg)
     loader = val_loader if args.split == "val" else train_loader
 
-    model = build_model(cfg, in_channels=2).to(device)
+    use_image_channel = bool(cfg.get("use_image_channel", False))
+    input_channels = int(cfg.get("input_channels", 3 if use_image_channel else 2))
+    model = build_model(cfg, in_channels=input_channels).to(device)
     model_type = str(cfg.get("model_type", "unet_baseline"))
     print(f"[INFO] Model: {model_type}")
+    print(f"[INFO] Inputs: channels={input_channels} | use_image_channel={use_image_channel}")
     checkpoint = torch.load(args.ckpt, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
 

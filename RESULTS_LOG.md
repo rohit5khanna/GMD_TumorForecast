@@ -457,3 +457,158 @@
 ### Next Action
 - Run seed-42 matched screen for Stage K.
 - Promote to 3-seed confirm if seed-42 delta is strong.
+
+---
+
+## Iteration 23: Stage K Seed-42 Screen (Architecture Tweak)
+- Date: March 30, 2026
+- Setup: `unet_residual_refine` with matched drift/no-drift configs.
+
+### Screen Result (seed 42)
+- `stageK_drift_dice = 0.6343755066`
+- `stageK_control_dice = 0.6340375543`
+- `delta = +0.0003379524`
+
+### Interpretation
+- Architecture tweak was effectively neutral on the screen run.
+- Stage K was not promoted to 3-seed confirm.
+
+---
+
+## Iteration 24: Long-Train Plateau Check (Stage J)
+- Date: March 30, 2026
+- Setup: extended training (`epochs=60`) for Stage J drift vs no-drift.
+
+### Plateau / Best
+- Drift: `best val Dice = 0.6345`, plateau epoch `~20`
+- No-drift: `best val Dice = 0.6290`, plateau epoch `~24`
+- Synthetic eval checkpoint results:
+  - drift: `dice=0.6345`, `bce=0.3935`
+  - no-drift: `dice=0.6290`, `bce=0.3801`
+
+### Interpretation
+- Longer training preserves a synthetic Dice gap (`+0.0055`) for drift.
+- Both runs plateau early; epoch count alone is not the main bottleneck.
+
+---
+
+## Iteration 25: SAILOR Tiny Pilot (H1) - First End-to-End Run
+- Date: March 30, 2026
+- Cohort: `sub-02, sub-04, sub-01, sub-03, sub-05`
+- Setup: one-shot synthetic-trained checkpoints, horizon-1 evaluation, compare drift vs no-drift vs LOCF.
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | n |
+|---|---:|---:|---:|
+| drift | 0.1899610092 | 0.0535783415 | 5 |
+| no-drift | 0.1351960418 | 0.0418245540 | 5 |
+| LOCF | 0.6934528213 | 0.1125416370 | 5 |
+
+- Mean deltas:
+  - `drift - no_drift = +0.0547649674`
+  - `drift - LOCF = -0.5034918121`
+- Wins:
+  - drift vs no-drift: `5/5`
+  - drift vs LOCF: `0/5`
+
+### Interpretation
+- Drift signal transfers relative to internal no-drift control.
+- Absolute real-data performance remains far below LOCF at H1.
+
+---
+
+## Iteration 26: SAILOR Tiny Pilot (H1) - Re-run with Long-Train Checkpoints
+- Date: March 30, 2026
+- Setup: replaced checkpoints with long-train Stage J (`e60`) and repeated H1 cohort eval.
+
+### Aggregate Summary
+| variant | mean_dice | std_dice | n |
+|---|---:|---:|---:|
+| drift | 0.1927176205 | 0.0554772607 | 5 |
+| no-drift | 0.1976680567 | 0.0444917122 | 5 |
+| LOCF | 0.6934528213 | 0.1125416370 | 5 |
+
+- Mean deltas:
+  - `drift - no_drift = -0.0049504362`
+  - `drift - LOCF = -0.5007352008`
+- Wins:
+  - drift vs no-drift: `1/5`
+  - drift vs LOCF: `0/5`
+
+### Interpretation
+- Long-train synthetic gains did not transfer to real H1 cohort.
+- Current synthetic-to-SAILOR transfer remains the limiting issue.
+
+---
+
+## Iteration 27: SAILOR Tiny Pilot (H2 Proxy Check)
+- Date: March 30, 2026
+- Cohort: `sub-02, sub-04, sub-01, sub-03` (`sub-05` had no H2 target session)
+- Setup note: this was a **proxy check** reusing H1 prediction volumes against H2 targets (not true H2 inference outputs).
+
+### Aggregate Summary
+| variant | mean_dice | n |
+|---|---:|---:|
+| drift | 0.3134659997 | 4 |
+| no-drift | 0.3160894926 | 4 |
+| LOCF | 0.4538847975 | 4 |
+
+- Mean deltas:
+  - `drift - no_drift = -0.0026234929`
+  - `drift - LOCF = -0.1404187977`
+- Wins:
+  - drift vs no-drift: `1/4`
+  - drift vs LOCF: `0/4`
+
+### Interpretation
+- Gap to LOCF is smaller at H2 proxy than H1, but drift still does not win.
+- Proper next check is true H2 generation and evaluation.
+
+---
+
+## Updated Cross-Domain Takeaway (Synthetic -> SAILOR)
+- Synthetic experiments consistently showed small positive drift effects.
+- On tiny SAILOR pilots, drift did not outperform LOCF and was not consistently better than no-drift.
+- Main blocker is domain transfer/conditioning mismatch, not lack of synthetic sweeps.
+
+### Recommended Direction Shift
+1. Reformulate as residual-over-LOCF prediction.
+2. Increase real-data conditioning (multi-modal MRI + multi-session context + time/treatment).
+3. Use motion+growth decomposition in the drift head.
+4. Add a small real-data adaptation/fine-tuning stage before larger claims.
+
+---
+
+## Logging Protocol (Keep Updated)
+For each new run, append:
+1. Date + iteration title.
+2. Exact setup (cohort, horizon, checkpoints, thresholds).
+3. Aggregate table (mean Dice/STD, wins, deltas).
+4. One-line interpretation and next action.
+
+---
+
+## Iteration 28: Experiment L (Synthetic Image Channel) - Code Integration
+- Date: March 31, 2026
+- Objective: test whether adding a synthetic MRI-like image channel improves drift behavior vs mask-only input.
+
+### Implementation Status
+- Added optional `use_image_channel` path in synthetic dataset.
+- New input format when enabled: `[baseline_mask, synthetic_image, delta_t_map]`.
+- Added lightweight MRI-like image synthesis:
+  - smooth bias field
+  - tumor-core intensity boost
+  - peritumoral halo
+  - additive noise
+- Updated training/eval channel wiring:
+  - `input_channels` is configurable
+  - `delta_t_channel_index` selects the conditioning channel used by drift losses
+  - default behavior remains backward-compatible for mask-only configs
+- Added Stage L configs:
+  - `config_mvp1_stageL_img.yaml`
+  - `config_mvp1_stageL_img_nodrift.yaml`
+
+### Planned Evaluation
+1. Seed-42 screen (`Stage L drift` vs `Stage L no-drift`) on synthetic.
+2. If promoted, run 3-seed confirm.
+3. Compare transfer on tiny SAILOR pilot against current mask-only baseline.

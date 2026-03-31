@@ -10,9 +10,10 @@ from torch.utils.data import DataLoader, Dataset
 class SyntheticTumorDataset(Dataset):
     """
     Returns:
-      x: [2, H, W, D] float32
+      x: [C, H, W, D] float32
          channel 0 = baseline mask
-         channel 1 = constant delta_t conditioning map
+         channel 1 = synthetic image (optional, if use_image_channel=True)
+         channel -1 = constant delta_t conditioning map
       y: [1, H, W, D] float32 (future mask)
     """
 
@@ -21,11 +22,13 @@ class SyntheticTumorDataset(Dataset):
         num_samples: int,
         volume_shape: Tuple[int, int, int] = (64, 64, 64),
         seed: int = 42,
+        use_image_channel: bool = False,
         params: Dict | None = None,
     ) -> None:
         self.num_samples = int(num_samples)
         self.shape = tuple(volume_shape)
         self.seed = int(seed)
+        self.use_image_channel = bool(use_image_channel)
         self.params = {
             "baseline_components_min": 1,
             "baseline_components_max": 2,
@@ -46,6 +49,14 @@ class SyntheticTumorDataset(Dataset):
             "delta_t_max": 1.0,
             "growth_steps_min": 2,
             "growth_steps_max": 6,
+            "image_bg_mean": 0.10,
+            "image_bg_std": 0.04,
+            "image_noise_std": 0.02,
+            "image_bias_amp": 0.10,
+            "image_bias_smooth_steps": 6,
+            "image_peritumor_smooth_steps": 5,
+            "image_tumor_core_amp": 0.35,
+            "image_peritumor_amp": 0.20,
         }
         if params:
             self.params.update(params)
@@ -185,6 +196,62 @@ class SyntheticTumorDataset(Dataset):
 
         return baseline, future, delta_t
 
+    def _smooth_field(self, field: np.ndarray, n_steps: int) -> np.ndarray:
+        """
+        Cheap 3D smoothing without scipy to keep dependencies minimal.
+        """
+        out = field.astype(np.float32, copy=True)
+        n_steps = max(0, int(n_steps))
+        for _ in range(n_steps):
+            out = (
+                out
+                + np.roll(out, 1, axis=0) + np.roll(out, -1, axis=0)
+                + np.roll(out, 1, axis=1) + np.roll(out, -1, axis=1)
+                + np.roll(out, 1, axis=2) + np.roll(out, -1, axis=2)
+            ) / 7.0
+        return out
+
+    def _make_synthetic_image(self, baseline: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+        """
+        Build a simple MRI-like synthetic image with:
+          - low-intensity background
+          - smooth bias field
+          - higher intensities in core/peritumoral regions
+        """
+        img = rng.normal(
+            loc=float(self.params["image_bg_mean"]),
+            scale=float(self.params["image_bg_std"]),
+            size=self.shape,
+        ).astype(np.float32)
+
+        # Smooth multiplicative/additive-style bias.
+        bias = rng.normal(loc=0.0, scale=1.0, size=self.shape).astype(np.float32)
+        bias = self._smooth_field(bias, int(self.params["image_bias_smooth_steps"]))
+        bmin, bmax = float(bias.min()), float(bias.max())
+        if bmax > bmin:
+            bias = (bias - bmin) / (bmax - bmin)
+        else:
+            bias = np.zeros_like(bias, dtype=np.float32)
+        img += float(self.params["image_bias_amp"]) * (bias - 0.5)
+
+        # Tumor core and soft peritumoral halo.
+        tumor_core = (baseline > 0.5).astype(np.float32)
+        peri = self._smooth_field(tumor_core, int(self.params["image_peritumor_smooth_steps"]))
+        peri = np.clip(peri - 0.25 * tumor_core, 0.0, 1.0)
+
+        img += float(self.params["image_tumor_core_amp"]) * tumor_core
+        img += float(self.params["image_peritumor_amp"]) * peri
+
+        # Fine-grain noise.
+        img += rng.normal(
+            loc=0.0,
+            scale=float(self.params["image_noise_std"]),
+            size=self.shape,
+        ).astype(np.float32)
+
+        img = np.clip(img, 0.0, 1.0).astype(np.float32)
+        return img
+
     def __getitem__(self, idx: int):
         # Deterministic sample generation per index.
         rng = np.random.default_rng(self.seed + idx * 9973)
@@ -192,7 +259,11 @@ class SyntheticTumorDataset(Dataset):
         baseline, future, delta_t = self._make_pair(rng)
 
         cond_map = np.full(self.shape, delta_t, dtype=np.float32)
-        x = np.stack([baseline, cond_map], axis=0)  # [2, H, W, D]
+        if self.use_image_channel:
+            synth_img = self._make_synthetic_image(baseline, rng)
+            x = np.stack([baseline, synth_img, cond_map], axis=0)  # [3, H, W, D]
+        else:
+            x = np.stack([baseline, cond_map], axis=0)  # [2, H, W, D]
         y = future[None, ...]  # [1, H, W, D]
 
         return torch.from_numpy(x), torch.from_numpy(y)
@@ -200,17 +271,20 @@ class SyntheticTumorDataset(Dataset):
 
 def make_dataloaders(cfg: Dict):
     dataset_params = dict(cfg.get("dataset_params", {}))
+    use_image_channel = bool(cfg.get("use_image_channel", False))
 
     train_ds = SyntheticTumorDataset(
         num_samples=cfg["train_samples"],
         volume_shape=tuple(cfg["volume_shape"]),
         seed=int(cfg.get("seed", 42)),
+        use_image_channel=use_image_channel,
         params=dataset_params,
     )
     val_ds = SyntheticTumorDataset(
         num_samples=cfg["val_samples"],
         volume_shape=tuple(cfg["volume_shape"]),
         seed=int(cfg.get("seed", 42)) + 1,
+        use_image_channel=use_image_channel,
         params=dataset_params,
     )
 
@@ -239,7 +313,7 @@ if __name__ == "__main__":
     }
     train_loader, _ = make_dataloaders(cfg)
     xb, yb = next(iter(train_loader))
-    print("x shape:", xb.shape)  # [B, 2, H, W, D]
+    print("x shape:", xb.shape)  # [B, C, H, W, D]
     print("y shape:", yb.shape)  # [B, 1, H, W, D]
 
 

@@ -1,0 +1,91 @@
+batch_size: 2
+device: auto
+epochs: 12
+learning_rate: 0.0001
+output_dir: outputs/mvp1_stageL_img
+seed: 42
+threshold: 0.5
+train_samples: 80
+val_samples: 20
+volume_shape:
+  - 32
+  - 32
+  - 32
+
+model_type: unet_baseline
+base_channels: 16
+
+use_image_channel: true
+input_channels: 3
+delta_t_channel_index: 2
+
+use_drift_loss: true
+lambda_drift: 0.1
+drift_lambda_warmup_epochs: 4
+drift_temperature: 0.2
+drift_feature_pool: 2
+drift_pool_scales: [2, 4]
+drift_pos_weight: 1.2
+drift_neg_weight: 0.8
+drift_boundary_gamma: 0.0
+drift_delta_t_beta: 1.5
+drift_delta_t_center: 0.6
+drift_use_memory_bank: true
+drift_neg_bank_size: 64
+drift_feature_source: probs
+
+use_local_token_drift: true
+lambda_local_drift: 0.2
+local_lambda_warmup_epochs: 4
+token_patch_size: 8
+token_stride: 8
+token_temperature: 0.05
+token_pos_weight: 1.2
+token_neg_weight: 0.8
+token_boundary_gamma: 0.0
+token_delta_t_beta: 1.5
+token_delta_t_center: 0.6
+token_use_memory_bank: true
+token_neg_bank_size: 64
+token_feature_source: latent
+token_feature_key: dec1
+
+use_component_drift: false
+lambda_component_drift: 0.0
+component_lambda_warmup_epochs: 4
+component_max_components: 3
+component_sigma: 3.0
+component_min_voxels: 10
+component_off_target_weight: 0.25
+component_delta_t_beta: 1.5
+component_delta_t_center: 0.6
+
+use_sdf_boundary_drift: true
+lambda_sdf_drift: 0.2
+sdf_lambda_warmup_epochs: 4
+sdf_band_width: 3.0
+sdf_clip_value: 10.0
+sdf_logit_scale: 4.0
+sdf_delta_t_beta: 1.5
+sdf_delta_t_center: 0.6
+
+dataset_params:
+  baseline_components_min: 1
+  baseline_components_max: 3
+  baseline_radius_min: 2
+  baseline_radius_max: 7
+  center_margin: 8
+  growth_seed_min: 2
+  growth_seed_max: 5
+  growth_radius_min: 2
+  growth_radius_max: 6
+  shift_prob: 0.55
+  shift_voxel_max: 3
+  satellite_prob: 0.35
+  satellite_offset_max: 14
+  satellite_radius_min: 1
+  satellite_radius_max: 3
+  delta_t_min: 0.2
+  delta_t_max: 1.2
+  growth_steps_min: 2
+  growth_steps_max: 8

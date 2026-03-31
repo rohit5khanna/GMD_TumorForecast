@@ -24,7 +24,8 @@ class ConvBlock3D(nn.Module):
 
 class OneShotPredictor(nn.Module):
     """
-    Input:  [B, 2, H, W, D]  -> baseline + delta_t_map
+    Input:  [B, C, H, W, D]
+            (minimum channels: baseline mask + delta_t map)
     Output: [B, 1, H, W, D]  -> logits for future tumor mask
     """
 

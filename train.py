@@ -101,11 +101,23 @@ def main() -> None:
     print(f"[INFO] Device: {device}")
 
     train_loader, val_loader = make_dataloaders(cfg)
+    use_image_channel = bool(cfg.get("use_image_channel", False))
+    input_channels = int(cfg.get("input_channels", 3 if use_image_channel else 2))
+    delta_t_channel_index = int(cfg.get("delta_t_channel_index", input_channels - 1))
+    if delta_t_channel_index < 0 or delta_t_channel_index >= input_channels:
+        raise ValueError(
+            f"delta_t_channel_index={delta_t_channel_index} is invalid for input_channels={input_channels}"
+        )
 
-    model = build_model(cfg, in_channels=2).to(device)
+    model = build_model(cfg, in_channels=input_channels).to(device)
     model_type = str(cfg.get("model_type", "unet_baseline"))
     n_params_m = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"[INFO] Model: {model_type} | params={n_params_m:.2f}M")
+    print(
+        f"[INFO] Inputs: channels={input_channels} | "
+        f"use_image_channel={use_image_channel} | "
+        f"delta_t_channel_index={delta_t_channel_index}"
+    )
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg["learning_rate"]))
     use_drift_loss = bool(cfg.get("use_drift_loss", False))
     lambda_drift = float(cfg.get("lambda_drift", 0.1))
@@ -233,6 +245,7 @@ def main() -> None:
         for xb, yb in train_loader:
             xb = xb.to(device)
             yb = yb.to(device)
+            delta_t_map = xb[:, delta_t_channel_index : delta_t_channel_index + 1]
 
             optimizer.zero_grad()
             need_latent_features = (
@@ -262,7 +275,7 @@ def main() -> None:
                     pos_weight=drift_pos_weight,
                     neg_weight=drift_neg_weight,
                     boundary_gamma=drift_boundary_gamma,
-                    delta_t_map=xb[:, 1:2],
+                    delta_t_map=delta_t_map,
                     delta_t_beta=drift_delta_t_beta,
                     delta_t_center=drift_delta_t_center,
                     feature_bank=global_feature_bank,
@@ -286,7 +299,7 @@ def main() -> None:
                     pos_weight=token_pos_weight,
                     neg_weight=token_neg_weight,
                     boundary_gamma=token_boundary_gamma,
-                    delta_t_map=xb[:, 1:2],
+                    delta_t_map=delta_t_map,
                     delta_t_beta=token_delta_t_beta,
                     delta_t_center=token_delta_t_center,
                     feature_bank=local_feature_bank,
@@ -303,7 +316,7 @@ def main() -> None:
                     component_sigma=component_sigma,
                     min_component_voxels=component_min_voxels,
                     off_target_weight=component_off_target_weight,
-                    delta_t_map=xb[:, 1:2],
+                    delta_t_map=delta_t_map,
                     delta_t_beta=component_delta_t_beta,
                     delta_t_center=component_delta_t_center,
                 )
@@ -318,7 +331,7 @@ def main() -> None:
                     sdf_band_width=sdf_band_width,
                     sdf_clip_value=sdf_clip_value,
                     sdf_logit_scale=sdf_logit_scale,
-                    delta_t_map=xb[:, 1:2],
+                    delta_t_map=delta_t_map,
                     delta_t_beta=sdf_delta_t_beta,
                     delta_t_center=sdf_delta_t_center,
                 )
